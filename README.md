@@ -1,5 +1,3 @@
-![banner](./mini-lsm-book/src/mini-lsm-logo.png)
-
 # Notes
 
 ## W1 D1
