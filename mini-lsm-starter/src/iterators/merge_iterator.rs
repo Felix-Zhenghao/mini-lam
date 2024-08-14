@@ -2,7 +2,9 @@
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
 use std::cmp::{self};
+use std::collections::binary_heap::PeekMut;
 use std::collections::BinaryHeap;
+use std::vec;
 
 use anyhow::Result;
 
@@ -26,6 +28,8 @@ impl<I: StorageIterator> PartialOrd for HeapWrapper<I> {
     }
 }
 
+// First, compare current key of the two iterators
+// Then, compare the id of the index of the heap wrapper
 impl<I: StorageIterator> Ord for HeapWrapper<I> {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.1
@@ -45,9 +49,37 @@ pub struct MergeIterator<I: StorageIterator> {
 
 impl<I: StorageIterator> MergeIterator<I> {
     pub fn create(iters: Vec<Box<I>>) -> Self {
-        unimplemented!()
+        let mut index: usize = 0; // fill the first element of HeapWrapper tuple
+
+        let vec_of_heapwrapper: Vec<HeapWrapper<I>> = iters
+        .into_iter()
+        .map(|iter| {
+            index += 1;
+            HeapWrapper(index,iter)
+        }).collect();
+
+
+        MergeIterator {
+            iters: BinaryHeap::from(vec_of_heapwrapper),
+            current: None
+        }.pop_to_current()
+        
+    }
+
+    // pop a HeapWrapper from iters to current
+    pub fn pop_to_current(mut self) -> Self {
+        if let Some(inner) = self.iters.peek_mut() {
+            self.current = Some(PeekMut::pop(inner));
+        }
+    
+        if self.iters.peek_mut().is_none() {
+            self.current = None;
+        }
+
+        self
     }
 }
+
 
 impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIterator
     for MergeIterator<I>
