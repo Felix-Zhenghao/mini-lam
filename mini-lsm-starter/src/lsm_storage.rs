@@ -396,27 +396,6 @@ impl LsmStorageInner {
         lower: Bound<&[u8]>,
         upper: Bound<&[u8]>,
     ) -> Result<FusedIterator<LsmIterator>> {
-        // let mut vec_memtable = Vec::new();
-
-        // let guard = self.state.read();
-        // let current_memtable: Arc<MemTable> = guard.memtable.clone();
-        // let imm_list: Vec<Arc<MemTable>> = guard.imm_memtables.clone();
-        // drop(guard);
-
-        // vec_memtable.push(current_memtable);
-        // vec_memtable.extend(imm_list);
-        // let vec_memtable_iter = vec_memtable
-        //     .into_iter()
-        //     .map(|memtable| Box::new(memtable.scan(_lower, _upper)))
-        //     .collect();
-
-        // // let vec_memtable_iter: Vec<Box<MemTableIterator>> = vec_memtable.into_iter().map(|memtable| Box::new(memtable.scan(_lower, _upper))).collect();
-        // let merged_iterator: MergeIterator<MemTableIterator> =
-        //     MergeIterator::create(vec_memtable_iter);
-        // Ok(FusedIterator::new(
-        //     LsmIterator::new(merged_iterator).unwrap(),
-        // ))
-
         let snapshot = {
             let guard = self.state.read();
             Arc::clone(&guard)
@@ -424,9 +403,18 @@ impl LsmStorageInner {
 
         let mut memtable_iter_vec = Vec::with_capacity(snapshot.imm_memtables.len() + 1);
         memtable_iter_vec.push(Box::new(snapshot.memtable.scan(lower, upper)));
-        for mem_table in snapshot.imm_memtables.iter() {
-            memtable_iter_vec.push(Box::new(mem_table.scan(lower, upper)));
-        }
+        memtable_iter_vec.extend(
+            snapshot
+                .imm_memtables
+                .iter()
+                .map(|table| Box::new(table.scan(lower, upper))),
+        );
+        let length = memtable_iter_vec.len();
+        let cap = memtable_iter_vec.capacity();
+        println!("{length} and {cap}");
+        // for mem_table in snapshot.imm_memtables.iter() {
+        //     memtable_iter_vec.push(Box::new(mem_table.scan(lower, upper)));
+        // }
         let merge_iterator = MergeIterator::create(memtable_iter_vec);
         Ok(FusedIterator::new(LsmIterator::new(merge_iterator)?))
     }
