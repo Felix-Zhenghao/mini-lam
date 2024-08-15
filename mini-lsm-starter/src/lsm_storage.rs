@@ -409,12 +409,6 @@ impl LsmStorageInner {
                 .iter()
                 .map(|table| Box::new(table.scan(lower, upper))),
         );
-        let length = memtable_iter_vec.len();
-        let cap = memtable_iter_vec.capacity();
-        println!("{length} and {cap}");
-        // for mem_table in snapshot.imm_memtables.iter() {
-        //     memtable_iter_vec.push(Box::new(mem_table.scan(lower, upper)));
-        // }
         let merge_iterator = MergeIterator::create(memtable_iter_vec);
         Ok(FusedIterator::new(LsmIterator::new(merge_iterator)?))
     }
