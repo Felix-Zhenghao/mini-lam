@@ -398,7 +398,7 @@ impl LsmStorageInner {
     ) -> Result<FusedIterator<LsmIterator>> {
         let snapshot = {
             let guard = self.state.read();
-            Arc::clone(&guard)
+            Arc::clone(&guard) // TODO: Understand this.
         };
 
         let mut memtable_iter_vec = Vec::with_capacity(snapshot.imm_memtables.len() + 1);
