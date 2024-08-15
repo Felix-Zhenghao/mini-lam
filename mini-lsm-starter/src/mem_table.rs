@@ -164,7 +164,7 @@ pub struct MemTableIterator {
     #[not_covariant]
     iter: SkipMapRangeIter<'this>,
     /// Stores the current key-value pair.
-    item: (Bytes, Bytes),
+    item: (Bytes, Bytes), // item inside the iter be cloned out to have easier access.
 }
 
 impl MemTableIterator {

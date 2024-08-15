@@ -15,9 +15,10 @@ use crate::compact::{
     CompactionController, CompactionOptions, LeveledCompactionController, LeveledCompactionOptions,
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, TieredCompactionController,
 };
+use crate::iterators::merge_iterator::MergeIterator;
 use crate::lsm_iterator::{FusedIterator, LsmIterator};
 use crate::manifest::Manifest;
-use crate::mem_table::MemTable;
+use crate::mem_table::{MemTable, MemTableIterator};
 use crate::mvcc::LsmMvccInner;
 use crate::table::SsTable;
 
@@ -392,9 +393,41 @@ impl LsmStorageInner {
     /// Create an iterator over a range of keys.
     pub fn scan(
         &self,
-        _lower: Bound<&[u8]>,
-        _upper: Bound<&[u8]>,
+        lower: Bound<&[u8]>,
+        upper: Bound<&[u8]>,
     ) -> Result<FusedIterator<LsmIterator>> {
-        unimplemented!()
+        // let mut vec_memtable = Vec::new();
+
+        // let guard = self.state.read();
+        // let current_memtable: Arc<MemTable> = guard.memtable.clone();
+        // let imm_list: Vec<Arc<MemTable>> = guard.imm_memtables.clone();
+        // drop(guard);
+
+        // vec_memtable.push(current_memtable);
+        // vec_memtable.extend(imm_list);
+        // let vec_memtable_iter = vec_memtable
+        //     .into_iter()
+        //     .map(|memtable| Box::new(memtable.scan(_lower, _upper)))
+        //     .collect();
+
+        // // let vec_memtable_iter: Vec<Box<MemTableIterator>> = vec_memtable.into_iter().map(|memtable| Box::new(memtable.scan(_lower, _upper))).collect();
+        // let merged_iterator: MergeIterator<MemTableIterator> =
+        //     MergeIterator::create(vec_memtable_iter);
+        // Ok(FusedIterator::new(
+        //     LsmIterator::new(merged_iterator).unwrap(),
+        // ))
+
+        let snapshot = {
+            let guard = self.state.read();
+            Arc::clone(&guard)
+        };
+
+        let mut memtable_iter_vec = Vec::with_capacity(snapshot.imm_memtables.len() + 1);
+        memtable_iter_vec.push(Box::new(snapshot.memtable.scan(lower, upper)));
+        for mem_table in snapshot.imm_memtables.iter() {
+            memtable_iter_vec.push(Box::new(mem_table.scan(lower, upper)));
+        }
+        let merge_iterator = MergeIterator::create(memtable_iter_vec);
+        Ok(FusedIterator::new(LsmIterator::new(merge_iterator)?))
     }
 }
