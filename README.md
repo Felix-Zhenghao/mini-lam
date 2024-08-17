@@ -36,3 +36,21 @@ pub trait StorageIterator {
     }
 }
 ```
+
+## W1 D3
+In this sector, the data stored in disk is very **compact**. Once you fix the byte size of offset and k_len and v_len, you only need `num_of_elements` as the extra information to get all data. See the implementation in `src/block.rs`. And this allows us to get key/value through slice rather than cloning everything.
+```
+----------------------------------------------------------------------------------------------------
+|             Data Section             |              Offset Section             |      Extra      |
+----------------------------------------------------------------------------------------------------
+| Entry #1 | Entry #2 | ... | Entry #N | Offset #1 | Offset #2 | ... | Offset #N | num_of_elements |
+----------------------------------------------------------------------------------------------------
+
+AND each entry is a k-v pair:
+
+-----------------------------------------------------------------------
+|                           Entry #1                            | ... |
+-----------------------------------------------------------------------
+| key_len (2B) | key (keylen) | value_len (2B) | value (varlen) | ... |
+-----------------------------------------------------------------------
+```
