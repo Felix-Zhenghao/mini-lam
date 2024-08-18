@@ -5,6 +5,8 @@ pub use builder::BlockBuilder;
 use bytes::{Buf, BufMut, Bytes};
 pub use iterator::BlockIterator;
 
+use crate::key::{Key, KeySlice};
+
 pub(crate) const SIZEOF_U16: usize = std::mem::size_of::<u16>();
 
 /// A block is the smallest unit of read and caching in LSM tree. It is a collection of sorted key-value pairs.
@@ -41,5 +43,18 @@ impl Block {
             data: data,
             offsets: offsets,
         }
+    }
+
+    // utility func for building SsTable from blocks
+    pub fn get_first_key(&self) -> &[u8] {
+        let key_len = (&self.data[..SIZEOF_U16]).get_u16() as usize;
+        &self.data[SIZEOF_U16..SIZEOF_U16 + key_len]
+    }
+
+    // utility func for building SsTable from blocks
+    pub fn get_last_key(&self) -> &[u8] {
+        let offset = *self.offsets.last().unwrap() as usize;
+        let key_len = (&self.data[offset..offset + SIZEOF_U16]).get_u16() as usize;
+        &self.data[offset + SIZEOF_U16..offset + SIZEOF_U16 + key_len]
     }
 }
