@@ -72,7 +72,7 @@ impl SsTableBuilder {
                 // the first block, update the first key
                 self.first_key = f_block_first_key.to_owned();
             }
-            let _ = self.builder.add(key, value); // now new builder has be initialized, call build again.
+            let _ = self.builder.add(key, value); // now new builder has be initialized, call add again.
         }
         self.last_key = key.raw_ref().to_owned();
     }
