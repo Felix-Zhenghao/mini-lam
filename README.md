@@ -1,4 +1,5 @@
 # Notes
+> In this project, all keys are sorted from small ones to big ones. (asc)
 
 ## W1 D1
 
@@ -54,4 +55,10 @@ AND each entry is a k-v pair:
 | key_len (2B) | key (keylen) | value_len (2B) | value (varlen) | ... |
 -----------------------------------------------------------------------
 ```
+
+
+## W1 D4
+
+
+
 

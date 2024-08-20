@@ -1,9 +1,9 @@
 #![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
-use std::sync::Arc;
+use std::{cmp, sync::Arc};
 
-use anyhow::Result;
+use anyhow::{Ok, Result};
 
 use super::SsTable;
 use crate::{block::BlockIterator, iterators::StorageIterator, key::KeySlice};
@@ -18,17 +18,72 @@ pub struct SsTableIterator {
 impl SsTableIterator {
     /// Create a new iterator and seek to the first key-value pair in the first data block.
     pub fn create_and_seek_to_first(table: Arc<SsTable>) -> Result<Self> {
-        unimplemented!()
+        debug_assert!(
+            table.block_meta.len() != 0,
+            "no block in table to so can't create an table iterator"
+        );
+        let blk_iter = BlockIterator::create_and_seek_to_first(table.read_block(0).unwrap());
+        let new_table_iter = SsTableIterator {
+            table: table,
+            blk_iter: blk_iter,
+            blk_idx: 0,
+        };
+        Ok(new_table_iter)
     }
 
     /// Seek to the first key-value pair in the first data block.
     pub fn seek_to_first(&mut self) -> Result<()> {
-        unimplemented!()
+        self.blk_iter.seek_to_first();
+        Ok(())
     }
 
     /// Create a new iterator and seek to the first key-value pair which >= `key`.
     pub fn create_and_seek_to_key(table: Arc<SsTable>, key: KeySlice) -> Result<Self> {
-        unimplemented!()
+        debug_assert!(
+            table.block_meta.len() != 0,
+            "no block in table to so can't create an table iterator"
+        );
+
+        // if key is bigger than any other key, return an invalid iterator
+        if key > table.last_key.as_key_slice() {
+            return Ok(SsTableIterator {
+                table: Arc::clone(&table),
+                blk_iter: BlockIterator::create_and_seek_to_key(table.read_block(0).unwrap(), key),
+                blk_idx: table.block_meta.len() - 1,
+            });
+        }
+
+        let mut low: usize = 0;
+        let mut high: usize = table.block_meta.len();
+        let target_id: usize;
+        let binary_search = |low: &mut usize, high: &mut usize| -> usize {
+            while *low < *high {
+                let mid = *low + (*high - *low) / 2;
+                match key.cmp(&KeySlice::from_slice(
+                    table.read_block(mid).unwrap().get_first_key(),
+                )) {
+                    cmp::Ordering::Equal => return mid,
+                    cmp::Ordering::Less => *high = mid - 1,
+                    cmp::Ordering::Greater => *low = mid,
+                }
+            }
+            *low
+        };
+        target_id = binary_search(&mut low, &mut high);
+
+        let target_block_iter =
+            BlockIterator::create_and_seek_to_key(table.read_block(target_id).unwrap(), key);
+        if !target_block_iter.is_valid() {
+            let target_id = target_id + 1;
+            let target_block_iter =
+                BlockIterator::create_and_seek_to_first(table.read_block(target_id).unwrap());
+        }
+        let new_table_iter = SsTableIterator {
+            table: table,
+            blk_iter: target_block_iter,
+            blk_idx: target_id,
+        };
+        Ok(new_table_iter)
     }
 
     /// Seek to the first key-value pair which >= `key`.
@@ -44,22 +99,31 @@ impl StorageIterator for SsTableIterator {
 
     /// Return the `key` that's held by the underlying block iterator.
     fn key(&self) -> KeySlice {
-        unimplemented!()
+        self.blk_iter.key()
     }
 
     /// Return the `value` that's held by the underlying block iterator.
     fn value(&self) -> &[u8] {
-        unimplemented!()
+        self.blk_iter.value()
     }
 
     /// Return whether the current block iterator is valid or not.
     fn is_valid(&self) -> bool {
-        unimplemented!()
+        // if the current block iterator is invalid and no more block in table -> invalid
+        self.blk_iter.is_valid() || self.blk_idx < self.table.block_meta.len() - 1
     }
 
     /// Move to the next `key` in the block.
     /// Note: You may want to check if the current block iterator is valid after the move.
     fn next(&mut self) -> Result<()> {
-        unimplemented!()
+        assert!(self.is_valid(), "call next on invalid SsTable iterator");
+        self.blk_iter.next();
+        if !self.blk_iter.is_valid() && self.blk_idx < self.table.block_meta.len() - 1 {
+            self.blk_idx += 1;
+            let new_block = self.table.read_block(self.blk_idx).unwrap();
+            let new_block_iterator = BlockIterator::create_and_seek_to_first(new_block);
+            self.blk_iter = new_block_iterator;
+        }
+        Ok(())
     }
 }

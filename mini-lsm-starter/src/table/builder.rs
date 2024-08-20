@@ -1,15 +1,15 @@
 #![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
+use std::path::Path;
 use std::sync::Arc;
-use std::{io::Read, path::Path};
 
 use anyhow::Result;
 use bytes::{BufMut, Bytes};
 
 use super::{BlockMeta, FileObject, SsTable};
 use crate::{
-    block::{Block, BlockBuilder},
+    block::BlockBuilder,
     key::{KeyBytes, KeySlice},
     lsm_storage::BlockCache,
 };
