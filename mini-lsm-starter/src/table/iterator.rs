@@ -6,7 +6,11 @@ use std::{cmp, sync::Arc};
 use anyhow::{Ok, Result};
 
 use super::SsTable;
-use crate::{block::BlockIterator, iterators::StorageIterator, key::KeySlice};
+use crate::{
+    block::{Block, BlockIterator},
+    iterators::StorageIterator,
+    key::KeySlice,
+};
 
 /// An iterator over the contents of an SSTable.
 pub struct SsTableIterator {
@@ -22,7 +26,7 @@ impl SsTableIterator {
             table.block_meta.len() != 0,
             "no block in table to so can't create an table iterator"
         );
-        let blk_iter = BlockIterator::create_and_seek_to_first(table.read_block(0).unwrap());
+        let blk_iter = BlockIterator::create_and_seek_to_first(table.read_block_cached(0).unwrap());
         let new_table_iter = SsTableIterator {
             table: table,
             blk_iter: blk_iter,
@@ -33,7 +37,10 @@ impl SsTableIterator {
 
     /// Seek to the first key-value pair in the first data block.
     pub fn seek_to_first(&mut self) -> Result<()> {
-        self.blk_iter.seek_to_first();
+        let refreshed_iter =
+            BlockIterator::create_and_seek_to_first(self.table.read_block_cached(0).unwrap());
+        self.blk_iter = refreshed_iter;
+        self.blk_idx = 0;
         Ok(())
     }
 
@@ -48,41 +55,16 @@ impl SsTableIterator {
         if key > table.last_key.as_key_slice() {
             return Ok(SsTableIterator {
                 table: Arc::clone(&table),
-                blk_iter: BlockIterator::create_and_seek_to_key(table.read_block(0).unwrap(), key),
+                blk_iter: BlockIterator::create_and_seek_to_key(
+                    table.read_block_cached(0).unwrap(),
+                    key,
+                ),
                 blk_idx: table.block_meta.len() - 1,
             });
         }
 
-        let mut low: usize = 0;
-        let mut high: usize = table.block_meta.len();
-        let target_id: usize;
-        let binary_search = |low: &mut usize, high: &mut usize| -> usize {
-            while *low < *high {
-                let mid = *low + (*high - *low) / 2;
-                match key.cmp(&KeySlice::from_slice(
-                    table.read_block(mid).unwrap().get_first_key(),
-                )) {
-                    cmp::Ordering::Equal => return mid,
-                    cmp::Ordering::Less => *high = mid - 1,
-                    cmp::Ordering::Greater => *low = mid,
-                }
-            }
-            *low
-        };
-        target_id = binary_search(&mut low, &mut high);
-
-        let target_block_iter =
-            BlockIterator::create_and_seek_to_key(table.read_block(target_id).unwrap(), key);
-        if !target_block_iter.is_valid() {
-            let target_id = target_id + 1;
-            let target_block_iter =
-                BlockIterator::create_and_seek_to_first(table.read_block(target_id).unwrap());
-        }
-        let new_table_iter = SsTableIterator {
-            table: table,
-            blk_iter: target_block_iter,
-            blk_idx: target_id,
-        };
+        let mut new_table_iter = SsTableIterator::create_and_seek_to_first(table)?;
+        new_table_iter.seek_to_key(key)?;
         Ok(new_table_iter)
     }
 
@@ -90,7 +72,46 @@ impl SsTableIterator {
     /// Note: You probably want to review the handout for detailed explanation when implementing
     /// this function.
     pub fn seek_to_key(&mut self, key: KeySlice) -> Result<()> {
-        unimplemented!()
+        if key > self.table.last_key.as_key_slice() {
+            self.blk_iter = BlockIterator::create_and_seek_to_key(
+                self.table.read_block_cached(0).unwrap(),
+                key,
+            );
+            self.blk_idx = self.table.block_meta.len() - 1;
+            return Ok(());
+        }
+
+        let mut low: usize = 0;
+        let mut high: usize = self.table.block_meta.len();
+        let target_id: usize;
+        let binary_search = |low: &mut usize, high: &mut usize| -> usize {
+            while *low < *high {
+                let mid = *low + (*high - *low) / 2;
+                match key.cmp(&KeySlice::from_slice(
+                    self.table.read_block_cached(mid).unwrap().get_last_key(),
+                )) {
+                    cmp::Ordering::Equal => return mid,
+                    cmp::Ordering::Less => *high = mid,
+                    cmp::Ordering::Greater => *low = mid + 1,
+                }
+            }
+            *low
+        };
+        target_id = binary_search(&mut low, &mut high);
+
+        let target_block_iter = BlockIterator::create_and_seek_to_key(
+            self.table.read_block_cached(target_id).unwrap(),
+            key,
+        );
+        if !target_block_iter.is_valid() {
+            let target_id = target_id + 1;
+            let target_block_iter = BlockIterator::create_and_seek_to_first(
+                self.table.read_block_cached(target_id).unwrap(),
+            );
+        }
+        self.blk_iter = target_block_iter;
+        self.blk_idx = target_id;
+        Ok(())
     }
 }
 
@@ -118,9 +139,9 @@ impl StorageIterator for SsTableIterator {
     fn next(&mut self) -> Result<()> {
         assert!(self.is_valid(), "call next on invalid SsTable iterator");
         self.blk_iter.next();
-        if !self.blk_iter.is_valid() && self.blk_idx < self.table.block_meta.len() - 1 {
+        if (!self.blk_iter.is_valid()) && (self.blk_idx < self.table.block_meta.len() - 1) {
             self.blk_idx += 1;
-            let new_block = self.table.read_block(self.blk_idx).unwrap();
+            let new_block = self.table.read_block_cached(self.blk_idx).unwrap();
             let new_block_iterator = BlockIterator::create_and_seek_to_first(new_block);
             self.blk_iter = new_block_iterator;
         }

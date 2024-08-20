@@ -58,7 +58,6 @@ AND each entry is a k-v pair:
 
 
 ## W1 D4
+Now the memory structure of this project become: when data coming in, they'll be written to memory table. For some time, memory table will be somehow be transferred to the disk. On the disk, data is organized as data blocks (permanent data stored outside), and several data blocks become an SST.
 
-
-
-
+**You also need to undersand how to implement cache using `moka` crate.**
