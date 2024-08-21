@@ -137,7 +137,6 @@ impl StorageIterator for SsTableIterator {
     /// Move to the next `key` in the block.
     /// Note: You may want to check if the current block iterator is valid after the move.
     fn next(&mut self) -> Result<()> {
-        assert!(self.is_valid(), "call next on invalid SsTable iterator");
         self.blk_iter.next();
         if (!self.blk_iter.is_valid()) && (self.blk_idx < self.table.block_meta.len() - 1) {
             self.blk_idx += 1;

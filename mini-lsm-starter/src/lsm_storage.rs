@@ -16,11 +16,13 @@ use crate::compact::{
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, TieredCompactionController,
 };
 use crate::iterators::merge_iterator::MergeIterator;
+use crate::iterators::two_merge_iterator::{self, TwoMergeIterator};
+use crate::key::KeySlice;
 use crate::lsm_iterator::{FusedIterator, LsmIterator};
 use crate::manifest::Manifest;
 use crate::mem_table::{MemTable, MemTableIterator};
 use crate::mvcc::LsmMvccInner;
-use crate::table::SsTable;
+use crate::table::{SsTable, SsTableIterator};
 
 pub type BlockCache = moka::sync::Cache<(usize, usize), Arc<Block>>;
 
@@ -401,6 +403,7 @@ impl LsmStorageInner {
             Arc::clone(&guard) // TODO: Understand this.
         };
 
+        // create the MemTableIterator part
         let mut memtable_iter_vec = Vec::with_capacity(snapshot.imm_memtables.len() + 1);
         memtable_iter_vec.push(Box::new(snapshot.memtable.scan(lower, upper)));
         memtable_iter_vec.extend(
@@ -409,7 +412,33 @@ impl LsmStorageInner {
                 .iter()
                 .map(|table| Box::new(table.scan(lower, upper))),
         );
-        let merge_iterator = MergeIterator::create(memtable_iter_vec);
-        Ok(FusedIterator::new(LsmIterator::new(merge_iterator)?))
+        let memtable_merge_iterator = MergeIterator::create(memtable_iter_vec);
+
+        // create the SsTableIterator part
+        let mut sst_iter_vec = Vec::with_capacity(snapshot.l0_sstables.len());
+        sst_iter_vec.extend(snapshot.l0_sstables.iter().map(|sst_id| {
+            let sst = snapshot.sstables.get(sst_id).unwrap();
+            let lower_bound = match lower {
+                Bound::Included(key) => key,
+                Bound::Excluded(key) => key,
+                Bound::Unbounded => &[],
+            };
+            Box::new(
+                SsTableIterator::create_and_seek_to_key(
+                    Arc::clone(sst),
+                    KeySlice::from_slice(lower_bound),
+                )
+                .unwrap(),
+            )
+        }));
+        let sst_merge_iterator = MergeIterator::create(sst_iter_vec);
+
+        // merge the two iterators into TwoMergeIterator
+        let two_merge_iterator =
+            TwoMergeIterator::create(memtable_merge_iterator, sst_merge_iterator).unwrap();
+        Ok(FusedIterator::new(LsmIterator::new(
+            two_merge_iterator,
+            upper,
+        )?))
     }
 }

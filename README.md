@@ -61,3 +61,9 @@ AND each entry is a k-v pair:
 Now the memory structure of this project become: when data coming in, they'll be written to memory table. For some time, memory table will be somehow be transferred to the disk. On the disk, data is organized as data blocks (permanent data stored outside), and several data blocks become an SST.
 
 **You also need to undersand how to implement cache using `moka` crate.**
+
+
+## W1 D5
+The reaction when call next on invalid iterator, including `MemTableIterator`, `MergeIterator`, `BlockIterator`, `SsTableIterator`, `TwoMergeIterator`, is `self.key()` and `self.value()` will both be `&[]` and won't return `Err`.
+
+However, in `lsm_iterator.rs`, if you wrap any iterator using `FusedIterator`, the underlying iterator will do nothing when called `next()` when it is invalid. This makes the code more efficient.
