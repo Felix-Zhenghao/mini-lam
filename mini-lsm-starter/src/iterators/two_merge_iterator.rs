@@ -85,6 +85,9 @@ impl<
             // only b is valid
             self.b.next()?;
         }
+        let a_valid = self.a.is_valid();
+        let b_valid = self.b.is_valid();
+        let two_valid = self.is_valid();
         Ok(())
     }
 }
