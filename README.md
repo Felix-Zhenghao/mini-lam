@@ -67,3 +67,13 @@ Now the memory structure of this project become: when data coming in, they'll be
 The reaction when call next on invalid iterator, including `MemTableIterator`, `MergeIterator`, `BlockIterator`, `SsTableIterator`, `TwoMergeIterator`, is `self.key()` and `self.value()` will both be `&[]` and won't return `Err`.
 
 However, in `lsm_iterator.rs`, if you wrap any iterator using `FusedIterator`, the underlying iterator will do nothing when called `next()` when it is invalid. This makes the code more efficient.
+
+## W1 D6
+> We have all in-memory things and on-disk files ready, and the storage engine is able to read and merge the data from all these structures. Now, we are going to implement the logic to move things from memory to the disk (so-called flush).
+
+
+
+
+
+
+

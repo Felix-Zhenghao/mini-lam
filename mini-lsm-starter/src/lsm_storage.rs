@@ -1,6 +1,7 @@
 #![allow(dead_code)] // REMOVE THIS LINE after fully implementing this functionality
 
 use std::collections::HashMap;
+use std::mem;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
@@ -8,9 +9,10 @@ use std::sync::Arc;
 
 use anyhow::{Ok, Result};
 use bytes::Bytes;
+use clap::builder::StringValueParser;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 
-use crate::block::Block;
+use crate::block::{Block, BlockBuilder};
 use crate::compact::{
     CompactionController, CompactionOptions, LeveledCompactionController, LeveledCompactionOptions,
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, TieredCompactionController,
@@ -18,12 +20,12 @@ use crate::compact::{
 use crate::iterators::merge_iterator::MergeIterator;
 use crate::iterators::two_merge_iterator::{self, TwoMergeIterator};
 use crate::iterators::StorageIterator;
-use crate::key::KeySlice;
+use crate::key::{Key, KeySlice};
 use crate::lsm_iterator::{FusedIterator, LsmIterator};
 use crate::manifest::Manifest;
 use crate::mem_table::{MemTable, MemTableIterator};
 use crate::mvcc::LsmMvccInner;
-use crate::table::{SsTable, SsTableIterator};
+use crate::table::{SsTable, SsTableBuilder, SsTableIterator};
 
 pub type BlockCache = moka::sync::Cache<(usize, usize), Arc<Block>>;
 
@@ -158,7 +160,16 @@ impl Drop for MiniLsm {
 
 impl MiniLsm {
     pub fn close(&self) -> Result<()> {
-        unimplemented!()
+        // TODO: Understand this.
+        self.compaction_notifier.send(()).ok();
+        self.flush_notifier.send(()).ok();
+        if let Some(handle) = self.compaction_thread.lock().take() {
+            handle.join().unwrap();
+        }
+        if let Some(handle) = self.flush_thread.lock().take() {
+            handle.join().unwrap();
+        }
+        Ok(())
     }
 
     /// Start the storage engine by either loading an existing directory or creating a new one if the directory does
@@ -404,7 +415,44 @@ impl LsmStorageInner {
 
     /// Force flush the earliest-created immutable memtable to disk
     pub fn force_flush_next_imm_memtable(&self) -> Result<()> {
-        unimplemented!()
+        let snapshot = {
+            let guard = self.state.read();
+            Arc::clone(&guard) // TODO: Understand this.
+        };
+
+        // process the block builder from the memtable data
+        let memtable_to_flush = snapshot.imm_memtables.last().unwrap();
+        let mut sst_builder = SsTableBuilder::new(1024); // configure the block size to 1024
+        memtable_to_flush.flush(&mut sst_builder)?;
+        let id = self.next_sst_id();
+        let path = self.path_of_sst(id);
+        let new_sst_table = Arc::new(sst_builder.build(id, None, path)?);
+
+        let state_lock = self.state_lock.lock();
+        // check whether the memtable has been flushed by other threads by checking if the id is still in the imm_memtables
+        let snapshot = {
+            let guard = self.state.read();
+            Arc::clone(&guard) // TODO: Understand this.
+        };
+        let id_vec: Vec<usize> = snapshot
+            .imm_memtables
+            .iter()
+            .map(|table| table.id())
+            .collect();
+        if !id_vec.contains(&memtable_to_flush.id()) {
+            return Ok(()); // the memtable has been flushed by other threads, return
+        } else {
+            let mut write_guard = self.state.write();
+            let mut snapshot = write_guard.as_ref().clone();
+            snapshot
+                .imm_memtables
+                .retain(|x| x.id() != memtable_to_flush.id());
+            snapshot.l0_sstables.insert(0, id);
+            snapshot.sstables.insert(id, new_sst_table);
+            *write_guard = Arc::new(snapshot);
+        }
+        drop(state_lock);
+        Ok(())
     }
 
     pub fn new_txn(&self) -> Result<()> {
@@ -435,8 +483,48 @@ impl LsmStorageInner {
         let memtable_merge_iterator = MergeIterator::create(memtable_iter_vec);
 
         // create the SsTableIterator part
-        let mut sst_iter_vec = Vec::with_capacity(snapshot.l0_sstables.len());
-        sst_iter_vec.extend(snapshot.l0_sstables.iter().map(|sst_id| {
+        // filter out the SSTs that are not in the range (optimization)
+        let sst_id_within_range: Vec<usize> = snapshot
+            .l0_sstables
+            .iter()
+            .filter(|x| {
+                let sst = snapshot.sstables.get(x).unwrap();
+                match (lower, upper) {
+                    (Bound::Included(lower), Bound::Included(upper)) => {
+                        sst.first_key().as_key_slice() <= KeySlice::from_slice(upper)
+                            && sst.last_key().as_key_slice() >= KeySlice::from_slice(lower)
+                    }
+                    (Bound::Included(lower), Bound::Excluded(upper)) => {
+                        sst.first_key().as_key_slice() < KeySlice::from_slice(upper)
+                            && sst.last_key().as_key_slice() >= KeySlice::from_slice(lower)
+                    }
+                    (Bound::Excluded(lower), Bound::Included(upper)) => {
+                        sst.first_key().as_key_slice() <= KeySlice::from_slice(upper)
+                            && sst.last_key().as_key_slice() > KeySlice::from_slice(lower)
+                    }
+                    (Bound::Excluded(lower), Bound::Excluded(upper)) => {
+                        sst.first_key().as_key_slice() < KeySlice::from_slice(upper)
+                            && sst.last_key().as_key_slice() > KeySlice::from_slice(lower)
+                    }
+                    (Bound::Unbounded, Bound::Included(upper)) => {
+                        sst.first_key().as_key_slice() <= KeySlice::from_slice(upper)
+                    }
+                    (Bound::Unbounded, Bound::Excluded(upper)) => {
+                        sst.first_key().as_key_slice() < KeySlice::from_slice(upper)
+                    }
+                    (Bound::Included(lower), Bound::Unbounded) => {
+                        sst.last_key().as_key_slice() >= KeySlice::from_slice(lower)
+                    }
+                    (Bound::Excluded(lower), Bound::Unbounded) => {
+                        sst.last_key().as_key_slice() > KeySlice::from_slice(lower)
+                    }
+                    (Bound::Unbounded, Bound::Unbounded) => true,
+                }
+            })
+            .map(|x| *x)
+            .collect();
+        let mut sst_iter_vec = Vec::with_capacity(sst_id_within_range.len());
+        sst_iter_vec.extend(sst_id_within_range.iter().map(|sst_id| {
             let sst = snapshot.sstables.get(sst_id).unwrap();
             let mut inside_iter;
             match lower {

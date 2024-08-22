@@ -1,7 +1,5 @@
 #![allow(dead_code)] // REMOVE THIS LINE after fully implementing this functionality
 
-use std::borrow::BorrowMut;
-use std::cmp::Ordering;
 use std::ops::Bound;
 use std::path::Path;
 use std::sync::atomic::AtomicUsize;
@@ -130,7 +128,12 @@ impl MemTable {
 
     /// Flush the mem-table to SSTable. Implement in week 1 day 6.
     pub fn flush(&self, _builder: &mut SsTableBuilder) -> Result<()> {
-        unimplemented!()
+        let mut iter = self.scan(Bound::Unbounded, Bound::Unbounded);
+        while iter.is_valid() {
+            _builder.add(iter.key(), iter.value());
+            iter.next()?;
+        }
+        Ok(())
     }
 
     pub fn id(&self) -> usize {

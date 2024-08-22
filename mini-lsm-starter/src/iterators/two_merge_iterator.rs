@@ -90,4 +90,8 @@ impl<
         let two_valid = self.is_valid();
         Ok(())
     }
+
+    fn num_active_iterators(&self) -> usize {
+        self.a.num_active_iterators() + self.b.num_active_iterators()
+    }
 }
