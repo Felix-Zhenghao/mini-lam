@@ -25,7 +25,7 @@ use crate::lsm_iterator::{FusedIterator, LsmIterator};
 use crate::manifest::Manifest;
 use crate::mem_table::{MemTable, MemTableIterator};
 use crate::mvcc::LsmMvccInner;
-use crate::table::{SsTable, SsTableBuilder, SsTableIterator};
+use crate::table::{bloom, SsTable, SsTableBuilder, SsTableIterator};
 
 pub type BlockCache = moka::sync::Cache<(usize, usize), Arc<Block>>;
 
@@ -320,6 +320,11 @@ impl LsmStorageInner {
         // search in SSTs
         for sst_id in snapshot.l0_sstables.iter() {
             let sst = snapshot.sstables.get(sst_id).unwrap();
+            if let Some(bloom) = &sst.bloom {
+                if !bloom.may_contain(farmhash::fingerprint32(_key)) {
+                    continue;
+                }
+            }
             let sst_iter = SsTableIterator::create_and_seek_to_key(
                 Arc::clone(sst),
                 KeySlice::from_slice(_key),

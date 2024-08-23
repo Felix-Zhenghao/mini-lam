@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use bytes::{BufMut, Bytes};
 
-use super::{BlockMeta, FileObject, SsTable};
+use super::{bloom::Bloom, BlockMeta, FileObject, SsTable};
 use crate::{
     block::BlockBuilder,
     key::{KeyBytes, KeySlice},
@@ -22,6 +22,7 @@ pub struct SsTableBuilder {
     data: Vec<u8>,
     pub(crate) meta: Vec<BlockMeta>,
     block_size: usize,
+    key_hashes: Vec<u32>,
 }
 
 impl SsTableBuilder {
@@ -34,6 +35,7 @@ impl SsTableBuilder {
             last_key: Vec::new(),
             data: Vec::new(),
             meta: Vec::new(),
+            key_hashes: Vec::new(),
         }
     }
 
@@ -46,6 +48,8 @@ impl SsTableBuilder {
             !key.is_empty(),
             "key to be put in SsTable shouldn't be empty"
         );
+
+        self.key_hashes.push(farmhash::fingerprint32(key.raw_ref()));
 
         // if Block is full, return the block and initialize the builder
         if let false = self.builder.add(key, value) {
@@ -62,7 +66,7 @@ impl SsTableBuilder {
             let finalized_block_meta = BlockMeta {
                 offset: self.data.len(),
                 first_key: KeyBytes::from_bytes(Bytes::copy_from_slice(f_block_first_key)),
-                last_key: KeyBytes::from_bytes(Bytes::copy_from_slice(f_block_last_key)),
+                last_key: KeyBytes::from_bytes(Bytes::copy_from_slice(f_block_last_key.as_slice())),
             };
 
             // update field of SsTableBuilder;
@@ -99,7 +103,7 @@ impl SsTableBuilder {
         let last_block_meta = BlockMeta {
             offset: self.data.len(),
             first_key: KeyBytes::from_bytes(Bytes::copy_from_slice(last_block_first_key)),
-            last_key: KeyBytes::from_bytes(Bytes::copy_from_slice(last_block_last_key)),
+            last_key: KeyBytes::from_bytes(Bytes::copy_from_slice(last_block_last_key.as_slice())),
         };
         self.data.extend(last_block.encode());
         self.meta.push(last_block_meta);
@@ -109,6 +113,13 @@ impl SsTableBuilder {
         let mut all_data = self.data.clone();
         BlockMeta::encode_block_meta(self.meta.clone().as_slice(), &mut all_data);
         all_data.put_u32(block_meta_offset);
+        let bloom = Bloom::build_from_key_hashes(
+            &self.key_hashes,
+            Bloom::bloom_bits_per_key(self.key_hashes.len(), 0.01),
+        );
+        let bloom_offset = all_data.len();
+        bloom.encode(&mut all_data);
+        all_data.put_u32(bloom_offset as u32);
 
         // create file object and write data into file
         let file = FileObject::create(path.as_ref(), all_data)?;
@@ -121,7 +132,7 @@ impl SsTableBuilder {
             block_cache: block_cache,
             first_key: KeyBytes::from_bytes(Bytes::copy_from_slice(self.first_key.as_slice())),
             last_key: KeyBytes::from_bytes(Bytes::copy_from_slice(self.last_key.as_slice())),
-            bloom: None,
+            bloom: Some(bloom),
             max_ts: 0,
         })
     }

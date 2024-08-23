@@ -1,7 +1,7 @@
 #![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
-use bytes::BufMut;
+use bytes::{Buf, BufMut};
 
 use crate::key::{KeySlice, KeyVec};
 
@@ -19,6 +19,18 @@ pub struct BlockBuilder {
     block_size: usize,
     /// The first key in the block
     first_key: KeyVec,
+}
+
+fn compute_overlap(first_key: &[u8], key: &[u8]) -> usize {
+    let mut overlap = 0;
+    for (a, b) in first_key.iter().zip(key.iter()) {
+        if a == b {
+            overlap += 1;
+        } else {
+            break;
+        }
+    }
+    overlap
 }
 
 impl BlockBuilder {
@@ -43,10 +55,15 @@ impl BlockBuilder {
             true => false,
             false => {
                 self.offsets.push(self.data.len() as u16);
-                self.data.put_u16(key.len() as u16);
-                self.data.put(key.raw_ref());
+                let overlap = compute_overlap(self.first_key.raw_ref(), key.raw_ref());
+                self.data.put_u16(overlap as u16);
+                self.data.put_u16(key.len() as u16 - overlap as u16);
+                self.data.put(&(key.raw_ref())[overlap..]);
                 self.data.put_u16(value.len() as u16);
                 self.data.put(value);
+                if self.first_key.is_empty() {
+                    self.first_key = key.to_key_vec();
+                }
                 true
             }
         }

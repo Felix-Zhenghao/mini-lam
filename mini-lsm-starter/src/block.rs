@@ -47,14 +47,32 @@ impl Block {
 
     // utility func for building SsTable from blocks
     pub fn get_first_key(&self) -> &[u8] {
+        /* before the prefix implementation:
         let key_len = (&self.data[..SIZEOF_U16]).get_u16() as usize;
         &self.data[SIZEOF_U16..SIZEOF_U16 + key_len]
+        */
+
+        // after the prefix implementation:
+        let key_len = (&self.data[SIZEOF_U16..SIZEOF_U16 * 2]).get_u16() as usize;
+        &self.data[SIZEOF_U16 * 2..SIZEOF_U16 * 2 + key_len]
     }
 
     // utility func for building SsTable from blocks
-    pub fn get_last_key(&self) -> &[u8] {
+    pub fn get_last_key(&self) -> Vec<u8> {
+        /* before the prefix implementation:
         let offset = *self.offsets.last().unwrap() as usize;
         let key_len = (&self.data[offset..offset + SIZEOF_U16]).get_u16() as usize;
         &self.data[offset + SIZEOF_U16..offset + SIZEOF_U16 + key_len]
+        */
+
+        // after the prefix implementation:
+        let offset = *self.offsets.last().unwrap() as usize;
+        let overlap = (&self.data[offset..offset + SIZEOF_U16]).get_u16() as usize;
+        let rest_key_len =
+            (&self.data[offset + SIZEOF_U16..offset + SIZEOF_U16 * 2]).get_u16() as usize;
+        let first_key = self.get_first_key();
+        let mut key = first_key[..overlap].to_vec();
+        key.extend(&self.data[offset + SIZEOF_U16 * 2..offset + SIZEOF_U16 * 2 + rest_key_len]);
+        key
     }
 }

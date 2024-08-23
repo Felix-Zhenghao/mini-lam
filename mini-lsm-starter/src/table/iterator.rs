@@ -88,7 +88,11 @@ impl SsTableIterator {
             while *low < *high {
                 let mid = *low + (*high - *low) / 2;
                 match key.cmp(&KeySlice::from_slice(
-                    self.table.read_block_cached(mid).unwrap().get_last_key(),
+                    self.table
+                        .read_block_cached(mid)
+                        .unwrap()
+                        .get_last_key()
+                        .as_slice(),
                 )) {
                     cmp::Ordering::Equal => return mid,
                     cmp::Ordering::Less => *high = mid,

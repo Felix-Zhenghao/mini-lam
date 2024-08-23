@@ -132,11 +132,22 @@ impl SsTable {
     pub fn open(id: usize, block_cache: Option<Arc<BlockCache>>, file: FileObject) -> Result<Self> {
         assert!(file.size() != 0, "Wrong: Read SsTable from an empty file!");
 
-        let meta_block_offset = file.read(file.size() - 4, 4).unwrap().as_slice().get_u32();
+        let bloom_offset = file.read(file.size() - 4, 4).unwrap().as_slice().get_u32();
+        let bloom_filter = Bloom::decode(
+            file.read(bloom_offset as u64, file.size() - 4 - bloom_offset as u64)?
+                .as_slice(),
+        )
+        .unwrap();
+
+        let meta_block_offset = file
+            .read(bloom_offset as u64 - 4, 4)
+            .unwrap()
+            .as_slice()
+            .get_u32();
         let block_meta = BlockMeta::decode_block_meta(
             file.read(
                 meta_block_offset as u64,
-                file.size() - 4 - meta_block_offset as u64,
+                bloom_offset as u64 - 4 - meta_block_offset as u64,
             )?
             .as_slice(),
         );
@@ -152,7 +163,7 @@ impl SsTable {
             block_cache: block_cache,
             first_key: first_key,
             last_key: last_key,
-            bloom: None,
+            bloom: Some(bloom_filter),
             max_ts: 0,
         })
     }

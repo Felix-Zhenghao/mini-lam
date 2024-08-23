@@ -112,9 +112,14 @@ impl BlockIterator {
         };
 
         let mut data = &self.block.data[offset_begin..offset_end];
-        let key_len = data.get_u16() as usize; // this will `advance` the data chunk
-        let key = data[..key_len].to_vec();
-        let value_range = (offset_begin + SIZEOF_U16 + key_len + SIZEOF_U16, offset_end);
+        let overlap = data.get_u16() as usize;
+        let rest_key_len = data.get_u16() as usize; // this will `advance` the data chunk
+        let mut key = self.block.get_first_key()[..overlap].to_vec();
+        key.extend(data[..rest_key_len].to_vec());
+        let value_range = (
+            offset_begin + SIZEOF_U16 * 2 + rest_key_len + SIZEOF_U16,
+            offset_end,
+        );
 
         // update the iterator
         self.key.clear();
