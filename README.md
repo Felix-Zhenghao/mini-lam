@@ -72,8 +72,22 @@ However, in `lsm_iterator.rs`, if you wrap any iterator using `FusedIterator`, t
 > We have all in-memory things and on-disk files ready, and the storage engine is able to read and merge the data from all these structures. Now, we are going to implement the logic to move things from memory to the disk (so-called flush).
 
 
+## W2 D1
+- usage of `pub use`
+```rust
+mod my_module {
+    pub use std::collections::HashMap;
+}
+fn main() {
+    let mut map = my_module::HashMap::new();
+    map.insert("key", "value");
+}
+```
+In this example, `pub use std::collections::HashMap`; inside `my_module` makes `HashMap` available not only within `my_module` but also to any module that imports `my_module`. This way, other modules can use `my_module::HashMap` directly.
 
-
+- Compaction does two things:
+    - sort the sst table on the disk to accelerate `get` and `scan`
+    - abandon all keys with empty value, lower the disk occupation
 
 
 

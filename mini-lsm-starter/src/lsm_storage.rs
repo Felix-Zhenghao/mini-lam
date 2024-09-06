@@ -1,7 +1,6 @@
 #![allow(dead_code)] // REMOVE THIS LINE after fully implementing this functionality
 
 use std::collections::HashMap;
-use std::mem;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
@@ -9,14 +8,15 @@ use std::sync::Arc;
 
 use anyhow::{Ok, Result};
 use bytes::Bytes;
-use clap::builder::StringValueParser;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 
 use crate::block::{Block, BlockBuilder};
 use crate::compact::{
-    CompactionController, CompactionOptions, LeveledCompactionController, LeveledCompactionOptions,
-    SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, TieredCompactionController,
+    CompactionController, CompactionOptions, CompactionTask, LeveledCompactionController,
+    LeveledCompactionOptions, SimpleLeveledCompactionController, SimpleLeveledCompactionOptions,
+    TieredCompactionController,
 };
+use crate::iterators::concat_iterator::SstConcatIterator;
 use crate::iterators::merge_iterator::MergeIterator;
 use crate::iterators::two_merge_iterator::{self, TwoMergeIterator};
 use crate::iterators::StorageIterator;
@@ -317,7 +317,7 @@ impl LsmStorageInner {
             }
         }
 
-        // search in SSTs
+        // search in l0 SSTs
         for sst_id in snapshot.l0_sstables.iter() {
             let sst = snapshot.sstables.get(sst_id).unwrap();
             if let Some(bloom) = &sst.bloom {
@@ -337,6 +337,38 @@ impl LsmStorageInner {
                     return Ok(Some(Bytes::copy_from_slice(sst_iter.value())));
                 }
             }
+        }
+
+        // search in other levels
+        match self.options.compaction_options {
+            CompactionOptions::NoCompaction => {
+                if snapshot.levels[0].1.is_empty() {
+                    return Ok(None);
+                } else {
+                    // TODO: optimize this part by utilizing sorted SSTs
+                    for sst_id in snapshot.levels[0].1.iter() {
+                        let sst = snapshot.sstables.get(sst_id).unwrap();
+                        if let Some(bloom) = &sst.bloom {
+                            if !bloom.may_contain(farmhash::fingerprint32(_key)) {
+                                continue;
+                            }
+                        }
+                        let sst_iter = SsTableIterator::create_and_seek_to_key(
+                            Arc::clone(sst),
+                            KeySlice::from_slice(_key),
+                        )
+                        .unwrap();
+                        if sst_iter.is_valid() && sst_iter.key() == KeySlice::from_slice(_key) {
+                            if sst_iter.value().is_empty() {
+                                return Ok(None);
+                            } else {
+                                return Ok(Some(Bytes::copy_from_slice(sst_iter.value())));
+                            }
+                        }
+                    }
+                }
+            }
+            _ => unimplemented!(),
         }
 
         Ok(None)
@@ -557,9 +589,30 @@ impl LsmStorageInner {
         }));
         let sst_merge_iterator = MergeIterator::create(sst_iter_vec);
 
-        // merge the two iterators into TwoMergeIterator
-        let two_merge_iterator =
+        // merge the two iterators into TwoMergeIterator: memtable and l0_ssts
+        let mem_l0_two_merge =
             TwoMergeIterator::create(memtable_merge_iterator, sst_merge_iterator).unwrap();
+
+        // create concat iterator for other sst levels
+        let concat_iter;
+        let two_merge_iterator = match self.options.compaction_options {
+            CompactionOptions::NoCompaction => {
+                if snapshot.levels[0].1.is_empty() {
+                    // no force full compaction happened
+                    concat_iter = SstConcatIterator::create_and_seek_to_first(Vec::new()).unwrap();
+                } else {
+                    let sstables: Vec<Arc<SsTable>> = snapshot.levels[0]
+                        .1
+                        .iter()
+                        .map(|x| Arc::clone(snapshot.sstables.get(x).unwrap()))
+                        .collect();
+                    concat_iter = SstConcatIterator::create_and_seek_to_first(sstables).unwrap();
+                }
+                TwoMergeIterator::create(mem_l0_two_merge, concat_iter).unwrap()
+            }
+            _ => unimplemented!(),
+        };
+
         Ok(FusedIterator::new(LsmIterator::new(
             two_merge_iterator,
             upper,

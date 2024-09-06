@@ -94,6 +94,8 @@ where
     I: for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>,
 {
     for (k, v) in expected {
+        // print the key and value of the current iterator
+        println!("key: {:?}, value: {:?}", iter.key(), iter.value());
         assert!(iter.is_valid());
         assert_eq!(
             k,
