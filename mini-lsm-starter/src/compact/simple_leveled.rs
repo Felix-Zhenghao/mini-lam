@@ -4,9 +4,9 @@ use crate::lsm_storage::LsmStorageState;
 
 #[derive(Debug, Clone)]
 pub struct SimpleLeveledCompactionOptions {
-    pub size_ratio_percent: usize,
-    pub level0_file_num_compaction_trigger: usize,
-    pub max_levels: usize,
+    pub size_ratio_percent: usize, // lower level number of files / upper level number of files threshold to trigger compaction (smaller then trigger)
+    pub level0_file_num_compaction_trigger: usize, // when the number of SSTs in L0 is larger than or equal to this number, trigger a compaction of L0 and L1
+    pub max_levels: usize, // the number of levels (excluding L0) in the LSM tree
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -35,7 +35,18 @@ impl SimpleLeveledCompactionController {
         &self,
         _snapshot: &LsmStorageState,
     ) -> Option<SimpleLeveledCompactionTask> {
-        unimplemented!()
+        let mut task = None;
+        // check if L0 compaction is needed
+        if self.options.level0_file_num_compaction_trigger <= _snapshot.l0_sstables.len() {
+            task = Some(SimpleLeveledCompactionTask {
+                upper_level: None,
+                upper_level_sst_ids: _snapshot.l0_sstables.clone(),
+                lower_level: 1,
+                lower_level_sst_ids: _snapshot.levels[0].1.clone(),
+                is_lower_level_bottom_level: self.options.max_levels == 1,
+            });
+        }
+        task
     }
 
     /// Apply the compaction result.
